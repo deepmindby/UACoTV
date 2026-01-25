@@ -22,7 +22,7 @@ def parse_args():
     parser.add_argument(
         "--model_path",
         type=str,
-        default="/home/haichao/TA/cotv/models/Qwen2.5-Math-7B",
+        default="/home/haichao/TA/UACoTV/models/Qwen2.5-Math-7B",
         help="Path to the pretrained model"
     )
     parser.add_argument(
@@ -35,7 +35,7 @@ def parse_args():
     parser.add_argument(
         "--data_path",
         type=str,
-        default="/home/haichao/TA/cotv/data",
+        default="/home/haichao/TA/UACoTV/data",
         help="Path to the data directory"
     )
     parser.add_argument(

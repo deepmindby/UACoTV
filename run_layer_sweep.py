@@ -26,9 +26,9 @@ def main():
     parser = argparse.ArgumentParser(description="Layer sweep for CoT vectors")
     
     # ==================== Model & Data ====================
-    parser.add_argument("--model_path", type=str, default="/home/haichao/TA/cotv/models/Qwen2.5-Math-7B")
+    parser.add_argument("--model_path", type=str, default="/home/haichao/TA/UACoTV/models/Qwen2.5-Math-7B")
     parser.add_argument("--model_name", type=str, default="qwen", choices=["qwen", "llama"])
-    parser.add_argument("--data_path", type=str, default="/home/haichao/TA/cotv/data")
+    parser.add_argument("--data_path", type=str, default="/home/haichao/TA/UACoTV/data")
     parser.add_argument("--dataset", type=str, default="gsm8k",
                         choices=["gsm8k", "math_easy", "math_hard", "mmlu_pro"])
     parser.add_argument("--output_dir", type=str, default="./outputs")

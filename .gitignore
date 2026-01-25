@@ -52,3 +52,14 @@ models/Qwen2.5-Math-7B/README.md
 models/Qwen2.5-Math-7B/tokenizer_config.json
 models/Qwen2.5-Math-7B/tokenizer.json
 models/Qwen2.5-Math-7B/vocab.json
+src/__pycache__/__init__.cpython-312.pyc
+src/__pycache__/data_utils.cpython-312.pyc
+src/__pycache__/eval.cpython-312.pyc
+src/__pycache__/models.cpython-312.pyc
+src/__pycache__/utils.cpython-312.pyc
+src/methods/__pycache__/__init__.cpython-312.pyc
+src/methods/__pycache__/base.cpython-312.pyc
+src/methods/__pycache__/extracted.cpython-312.pyc
+src/methods/__pycache__/learnable.cpython-312.pyc
+src/methods/__pycache__/multi_layer_ua.cpython-312.pyc
+src/methods/__pycache__/ua_vector.cpython-312.pyc
