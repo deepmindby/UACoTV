@@ -1,10 +1,11 @@
 """
 Main entry point for CoT Vectors.
 
-Supports three methods based on Variational CoT Vectors framework:
+Supports four methods based on Variational CoT Vectors framework:
 - Extracted: Statistical aggregation of activation differences
 - Learnable: Gradient optimization via teacher-student framework
 - UA: Uncertainty-Aware with Bayesian shrinkage
+- Mixture UA: IGMM-based multimodal reasoning with per-cluster shrinkage
 
 RL-based methods have been removed in favor of analytical approaches.
 """
@@ -19,6 +20,7 @@ from src.data_utils import load_dataset
 from src.methods.extracted import ExtractedCoTVector
 from src.methods.learnable import LearnableCoTVector
 from src.methods.ua_vector import UACoTVector
+from src.methods.mixture_ua import MixtureUACoTVector
 from src.methods.multi_layer_ua import MultiLayerUAVector, MultiLayerEvaluator
 from src.eval import run_baseline_evaluation, run_injection_evaluation
 from src.utils import set_seed, setup_wandb
@@ -61,6 +63,14 @@ def main():
         if args.multi_layer:
             print(f"  Multi-layer: {args.target_layers}")
     
+    if args.method == "mixture_ua":
+        print("-" * 60)
+        print("Mixture UA (IGMM) Configuration:")
+        print(f"  Prior variance τ²: {args.tau_squared}")
+        print(f"  Min variance: {args.min_variance}")
+        print(f"  Max components: {args.num_mixture_components}")
+        print(f"  Concentration prior α: {args.mixture_concentration}")
+    
     print("=" * 60)
     
     # Setup WandB
@@ -94,6 +104,8 @@ def main():
     # Get or load vector
     vector = None
     layer_vectors = None  # For multi-layer
+    cluster_vectors = None  # For mixture_ua
+    method = None  # Keep reference to method object
     
     if args.vector_path:
         print(f"\nLoading vector from {args.vector_path}")
@@ -104,6 +116,9 @@ def main():
             elif "layer_vectors" in loaded:
                 layer_vectors = loaded["layer_vectors"]
                 vector = list(layer_vectors.values())[0]  # Primary vector
+            # Load cluster vectors if present
+            if "cluster_vectors" in loaded:
+                cluster_vectors = loaded["cluster_vectors"]
         else:
             vector = loaded
         print(f"Loaded vector: shape={vector.shape}, norm={vector.norm().item():.4f}")
@@ -173,6 +188,22 @@ def main():
                 )
                 vector = method.extract(support_samples)
         
+        elif args.method == "mixture_ua":
+            print("Extracting Mixture UA CoT Vector (IGMM)...")
+            method = MixtureUACoTVector(
+                model_wrapper=model_wrapper,
+                tokenizer=tokenizer,
+                layer_idx=args.layer_idx,
+                dataset_type=args.dataset,
+                tau_squared=args.tau_squared,
+                min_variance=args.min_variance,
+                num_components=args.num_mixture_components,
+                concentration_prior=args.mixture_concentration,
+            )
+            vector = method.extract(support_samples)
+            # Get all cluster vectors for saving
+            cluster_vectors = method.get_all_cluster_vectors()
+        
         else:
             raise ValueError(f"Unknown method: {args.method}")
         
@@ -197,8 +228,19 @@ def main():
             if layer_vectors is not None:
                 save_data["layer_vectors"] = {k: v.cpu() for k, v in layer_vectors.items()}
             
+            # Include ALL cluster vectors for mixture_ua method
+            if args.method == "mixture_ua" and cluster_vectors is not None:
+                save_data["cluster_vectors"] = {k: v.cpu() for k, v in cluster_vectors.items()}
+                # Also include full statistics for analysis
+                if hasattr(method, 'get_statistics'):
+                    save_data["statistics"] = method.get_statistics()
+            
             torch.save(save_data, vector_path)
             print(f"Vector saved to {vector_path}")
+            
+            # Print additional info for mixture_ua
+            if args.method == "mixture_ua" and cluster_vectors:
+                print(f"  Saved {len(cluster_vectors)} cluster vectors")
     
     # Evaluation
     if args.mode in ["eval", "both"] and test_samples:
@@ -259,7 +301,7 @@ def main():
                 )
                 evaluator.clear_hooks()
             else:
-                # Single-layer evaluation
+                # Single-layer evaluation (works for extracted, learnable, ua, mixture_ua)
                 print(f"\n[2/2] With CoT Vector (layer {args.layer_idx})...")
                 injection_results = run_injection_evaluation(
                     model_wrapper=model_wrapper,
@@ -299,6 +341,10 @@ def main():
         if vector is not None:
             print(f"Vec norm:   {vector.norm().item():.4f}")
         
+        # Print mixture_ua specific info
+        if args.method == "mixture_ua" and cluster_vectors:
+            print(f"Clusters:   {len(cluster_vectors)} valid clusters discovered")
+        
         print("=" * 60)
         
         # Log to WandB
@@ -314,6 +360,9 @@ def main():
                 }
                 if baseline_results:
                     log_dict["eval/improvement"] = injection_results['accuracy'] - baseline_results['accuracy']
+                # Add mixture_ua specific metrics
+                if args.method == "mixture_ua" and cluster_vectors:
+                    log_dict["eval/num_clusters"] = len(cluster_vectors)
                 wandb_run.log(log_dict)
             wandb_run.finish()
     

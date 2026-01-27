@@ -187,3 +187,5 @@ outputs/vectors_paths_ua_math_easy_20260127_053053.txt
 outputs/vectors_paths_ua_math_hard_20260126_140730.txt
 outputs/vectors_paths_ua_math_hard_20260127_054755.txt
 outputs/vectors_paths_ua_mmlu_pro_20260126_172112.txt
+outputs/mixture_ua_gsm8k_L0.pt
+src/methods/__pycache__/mixture_ua.cpython-312.pyc

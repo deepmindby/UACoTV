@@ -1,11 +1,12 @@
 """
 Argument parser for CoT Vectors.
-Supports: Extracted, Learnable, and Uncertainty-Aware (UA) methods.
+Supports: Extracted, Learnable, Uncertainty-Aware (UA), and Mixture UA methods.
 
 Based on "Variational CoT Vectors" framework:
 - Extracted: Statistical aggregation to approximate posterior
 - Learnable: Gradient optimization for global reasoning patterns
 - UA: Bayesian shrinkage with uncertainty-aware gating
+- Mixture UA: IGMM-based multimodal reasoning with per-cluster shrinkage
 
 All RL-related arguments have been removed.
 """
@@ -56,8 +57,8 @@ def parse_args():
         "--method",
         type=str,
         default="extracted",
-        choices=["extracted", "learnable", "ua"],
-        help="CoT Vector acquisition method: extracted, learnable, or ua (uncertainty-aware)"
+        choices=["extracted", "learnable", "ua", "mixture_ua"],
+        help="CoT Vector acquisition method: extracted, learnable, ua, or mixture_ua"
     )
     parser.add_argument(
         "--mode",
@@ -116,6 +117,21 @@ def parse_args():
         type=float,
         default=1e-6,
         help="Minimum variance threshold for numerical stability"
+    )
+    
+    # ==================== Mixture UA Configuration ====================
+    parser.add_argument(
+        "--num_mixture_components",
+        type=int,
+        default=10,
+        help="Upper bound for DPGMM components in mixture_ua method"
+    )
+    parser.add_argument(
+        "--mixture_concentration",
+        type=float,
+        default=1.0,
+        help="Concentration prior α for Dirichlet Process in mixture_ua method. "
+             "Smaller = fewer clusters, larger = more clusters"
     )
     
     # ==================== Multi-Layer UA Configuration ====================

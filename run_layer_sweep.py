@@ -3,7 +3,7 @@
 Layer sweep script for CoT Vectors.
 Evaluates injection at different layers to find optimal performance.
 
-Supports methods: extracted, learnable, ua (uncertainty-aware)
+Supports methods: extracted, learnable, ua (uncertainty-aware), mixture_ua (IGMM-based)
 RL-based methods have been removed.
 """
 
@@ -18,6 +18,7 @@ from src.data_utils import load_dataset
 from src.methods.extracted import ExtractedCoTVector
 from src.methods.learnable import LearnableCoTVector
 from src.methods.ua_vector import UACoTVector
+from src.methods.mixture_ua import MixtureUACoTVector
 from src.eval import run_baseline_evaluation, run_injection_evaluation
 from src.utils import set_seed
 
@@ -38,7 +39,7 @@ def main():
     
     # ==================== Method Selection ====================
     parser.add_argument("--method", type=str, default="extracted",
-                        choices=["extracted", "learnable", "ua"],
+                        choices=["extracted", "learnable", "ua", "mixture_ua"],
                         help="CoT Vector acquisition method")
     
     # ==================== Layer Selection ====================
@@ -59,9 +60,9 @@ def main():
                         help="Pre-computed baseline accuracy (use with --skip_baseline)")
     
     # ==================== Learnable Vector Config ====================
-    parser.add_argument("--lambda_val", type=float, default=1)
+    parser.add_argument("--lambda_val", type=float, default=0.5)
     parser.add_argument("--learning_rate", type=float, default=5e-3)
-    parser.add_argument("--num_epochs", type=int, default=10)
+    parser.add_argument("--num_epochs", type=int, default=5)
     parser.add_argument("--batch_size", type=int, default=2)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=4)
     parser.add_argument("--warmup_ratio", type=float, default=0.1)
@@ -74,6 +75,12 @@ def main():
                         help="Prior variance τ² for Bayesian shrinkage")
     parser.add_argument("--min_variance", type=float, default=1e-6,
                         help="Minimum variance for numerical stability")
+    
+    # ==================== Mixture UA Config ====================
+    parser.add_argument("--num_mixture_components", type=int, default=10,
+                        help="Upper bound for DPGMM components in mixture_ua method")
+    parser.add_argument("--mixture_concentration", type=float, default=1.0,
+                        help="Concentration prior α for Dirichlet Process in mixture_ua method")
     
     # ==================== Saving Options ====================
     parser.add_argument("--save_vectors", action="store_true", default=False,
@@ -100,6 +107,9 @@ def main():
               f"lr={args.learning_rate}, λ={args.lambda_val}, max_len={args.max_length}")
     if args.method == "ua":
         print(f"UA Config: τ²={args.tau_squared}, min_var={args.min_variance}")
+    if args.method == "mixture_ua":
+        print(f"Mixture UA Config: τ²={args.tau_squared}, min_var={args.min_variance}, "
+              f"components={args.num_mixture_components}, α={args.mixture_concentration}")
     print("=" * 70)
     
     # Load model
@@ -154,6 +164,8 @@ def main():
         print(f"\n>>> Layer {layer_idx}")
         
         vector = None
+        method = None
+        cluster_vectors = None  # For mixture_ua
         
         # Check if we should load a pre-trained vector
         if args.load_vectors_dir:
@@ -166,6 +178,9 @@ def main():
                 loaded = torch.load(vector_path, map_location="cpu")
                 if isinstance(loaded, dict) and "vector" in loaded:
                     vector = loaded["vector"]
+                    # Load cluster vectors if present
+                    if "cluster_vectors" in loaded:
+                        cluster_vectors = loaded["cluster_vectors"]
                 else:
                     vector = loaded
             else:
@@ -211,6 +226,21 @@ def main():
                     )
                     vector = method.extract(support_samples)
                     
+                elif args.method == "mixture_ua":
+                    method = MixtureUACoTVector(
+                        model_wrapper=model_wrapper,
+                        tokenizer=tokenizer,
+                        layer_idx=layer_idx,
+                        dataset_type=args.dataset,
+                        tau_squared=args.tau_squared,
+                        min_variance=args.min_variance,
+                        num_components=args.num_mixture_components,
+                        concentration_prior=args.mixture_concentration,
+                    )
+                    vector = method.extract(support_samples)
+                    # Get all cluster vectors for saving
+                    cluster_vectors = method.get_all_cluster_vectors()
+                    
             except RuntimeError as e:
                 if "out of memory" in str(e).lower() or "cuda" in str(e).lower():
                     print(f"  Layer {layer_idx}: CUDA OOM - {e}")
@@ -250,12 +280,24 @@ def main():
             save_data = {"vector": vector.cpu(), "layer": layer_idx, "method": args.method}
             
             # Include UA statistics if available
-            if args.method == "ua" and hasattr(method, 'get_statistics'):
+            if args.method == "ua" and method is not None and hasattr(method, 'get_statistics'):
                 save_data["statistics"] = method.get_statistics()
+            
+            # Include ALL cluster vectors for mixture_ua method
+            if args.method == "mixture_ua":
+                if cluster_vectors is not None:
+                    save_data["cluster_vectors"] = {k: v.cpu() for k, v in cluster_vectors.items()}
+                if method is not None and hasattr(method, 'get_statistics'):
+                    save_data["statistics"] = method.get_statistics()
             
             torch.save(save_data, vector_path)
             vectors_dict[layer_idx] = vector_path
-            print(f"  Saved vector to {vector_path}, norm={vector.norm().item():.4f}")
+            
+            # Print save info
+            save_info = f"norm={vector.norm().item():.4f}"
+            if args.method == "mixture_ua" and cluster_vectors:
+                save_info += f", clusters={len(cluster_vectors)}"
+            print(f"  Saved vector to {vector_path}, {save_info}")
         
         # Evaluate
         try:
@@ -268,18 +310,30 @@ def main():
             diff = layer_results['accuracy'] - baseline_accuracy if baseline_accuracy else 0
             vec_norm = vector.norm().item() if vector is not None else 0
             
-            results.append({
+            result_entry = {
                 'layer': layer_idx,
                 'accuracy': layer_results['accuracy'],
                 'diff': diff,
                 'correct': layer_results['correct'],
                 'total': layer_results['total'],
                 'vector_norm': vec_norm,
-            })
+            }
             
-            print(f"  Layer {layer_idx:2d}: {layer_results['accuracy']:.2f}% "
-                  f"({layer_results['correct']}/{layer_results['total']}) "
-                  f"[{diff:+.2f}% vs baseline] norm={vec_norm:.2f}")
+            # Add mixture_ua specific info
+            if args.method == "mixture_ua" and cluster_vectors:
+                result_entry['num_clusters'] = len(cluster_vectors)
+                if method is not None and hasattr(method, 'dominant_cluster_id'):
+                    result_entry['dominant_cluster'] = method.dominant_cluster_id
+            
+            results.append(result_entry)
+            
+            # Print result
+            result_str = (f"  Layer {layer_idx:2d}: {layer_results['accuracy']:.2f}% "
+                         f"({layer_results['correct']}/{layer_results['total']}) "
+                         f"[{diff:+.2f}% vs baseline] norm={vec_norm:.2f}")
+            if args.method == "mixture_ua" and cluster_vectors:
+                result_str += f" clusters={len(cluster_vectors)}"
+            print(result_str)
             
         except Exception as e:
             print(f"  Layer {layer_idx:2d}: Evaluation Error - {e}")
@@ -316,18 +370,31 @@ def main():
         print(f"\nLayer-wise Average: {avg_accuracy:.2f}%")
         print(f"Average Vector Norm: {avg_norm:.2f}")
         
+        # Mixture UA specific summary
+        if args.method == "mixture_ua":
+            cluster_counts = [r.get('num_clusters', 0) for r in valid_results if 'num_clusters' in r]
+            if cluster_counts:
+                avg_clusters = sum(cluster_counts) / len(cluster_counts)
+                print(f"Average Clusters: {avg_clusters:.1f}")
+        
         print("\nTop 5 layers:")
         for r in valid_results[:5]:
             diff_str = f"({r['diff']:+.2f}%)" if baseline_accuracy else ""
             norm_str = f"norm={r.get('vector_norm', 0):.1f}"
-            print(f"  Layer {r['layer']:2d}: {r['accuracy']:.2f}% {diff_str} {norm_str}")
+            extra_str = ""
+            if args.method == "mixture_ua" and 'num_clusters' in r:
+                extra_str = f" clusters={r['num_clusters']}"
+            print(f"  Layer {r['layer']:2d}: {r['accuracy']:.2f}% {diff_str} {norm_str}{extra_str}")
         
         if len(valid_results) > 5:
             print("\nBottom 5 layers:")
             for r in valid_results[-5:]:
                 diff_str = f"({r['diff']:+.2f}%)" if baseline_accuracy else ""
                 norm_str = f"norm={r.get('vector_norm', 0):.1f}"
-                print(f"  Layer {r['layer']:2d}: {r['accuracy']:.2f}% {diff_str} {norm_str}")
+                extra_str = ""
+                if args.method == "mixture_ua" and 'num_clusters' in r:
+                    extra_str = f" clusters={r['num_clusters']}"
+                print(f"  Layer {r['layer']:2d}: {r['accuracy']:.2f}% {diff_str} {norm_str}{extra_str}")
         
         # Best layer
         best = valid_results[0]
@@ -335,6 +402,8 @@ def main():
         if baseline_accuracy:
             print(f"  Improvement over baseline: {best['diff']:+.2f}%")
         print(f"  Vector norm: {best.get('vector_norm', 0):.2f}")
+        if args.method == "mixture_ua" and 'num_clusters' in best:
+            print(f"  Number of clusters: {best['num_clusters']}")
     
     # Error summary
     error_results = [r for r in results if 'error' in r]
@@ -372,22 +441,38 @@ def main():
             f.write(f"  Tau squared: {args.tau_squared}\n")
             f.write(f"  Min variance: {args.min_variance}\n")
         
-        f.write(f"\nLayer\tAccuracy\tDiff\tCorrect\tTotal\tNorm\n")
-        f.write("-" * 60 + "\n")
+        if args.method == "mixture_ua":
+            f.write(f"\nMixture UA Config:\n")
+            f.write(f"  Tau squared: {args.tau_squared}\n")
+            f.write(f"  Min variance: {args.min_variance}\n")
+            f.write(f"  Max components: {args.num_mixture_components}\n")
+            f.write(f"  Concentration prior: {args.mixture_concentration}\n")
+        
+        # Header with optional cluster column for mixture_ua
+        if args.method == "mixture_ua":
+            f.write(f"\nLayer\tAccuracy\tDiff\tCorrect\tTotal\tNorm\tClusters\n")
+        else:
+            f.write(f"\nLayer\tAccuracy\tDiff\tCorrect\tTotal\tNorm\n")
+        f.write("-" * 70 + "\n")
         
         for r in sorted(results, key=lambda x: x['layer']):
             if 'error' in r:
                 f.write(f"{r['layer']}\tERROR\t-\t-\t-\t-\t{r['error'][:30]}\n")
             else:
-                f.write(f"{r['layer']}\t{r['accuracy']:.2f}\t{r['diff']:+.2f}\t"
-                       f"{r['correct']}\t{r['total']}\t{r.get('vector_norm', 0):.2f}\n")
+                base_line = (f"{r['layer']}\t{r['accuracy']:.2f}\t{r['diff']:+.2f}\t"
+                            f"{r['correct']}\t{r['total']}\t{r.get('vector_norm', 0):.2f}")
+                if args.method == "mixture_ua":
+                    base_line += f"\t{r.get('num_clusters', 'N/A')}"
+                f.write(base_line + "\n")
         
         # Summary at the end
         if valid_results:
-            f.write(f"\n" + "=" * 60 + "\n")
+            f.write(f"\n" + "=" * 70 + "\n")
             f.write(f"Best Layer: {valid_results[0]['layer']} ({valid_results[0]['accuracy']:.2f}%)\n")
             f.write(f"Layer-wise Average: {avg_accuracy:.2f}%\n")
             f.write(f"Average Vector Norm: {avg_norm:.2f}\n")
+            if args.method == "mixture_ua" and cluster_counts:
+                f.write(f"Average Clusters: {avg_clusters:.1f}\n")
     
     print(f"\nResults saved to {result_file}")
     

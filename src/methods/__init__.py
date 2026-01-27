@@ -12,6 +12,10 @@ Available methods based on Variational CoT Vectors framework:
 - UACoTVector: Uncertainty-Aware vectors with Bayesian shrinkage
   MAP estimation with structured prior for adaptive gating.
 
+- MixtureUACoTVector: Mixture of Uncertainty-Aware vectors using IGMM
+  Dirichlet Process GMM for discovering multimodal reasoning patterns,
+  with per-cluster Bayesian shrinkage.
+
 - MultiLayerUAVector: Multi-layer UA injection
   Simultaneous injection across multiple layers with independent shrinkage.
 
@@ -23,6 +27,7 @@ from .base import BaseCoTVectorMethod
 from .extracted import ExtractedCoTVector
 from .learnable import LearnableCoTVector
 from .ua_vector import UACoTVector
+from .mixture_ua import MixtureUACoTVector
 from .multi_layer_ua import MultiLayerUAVector, MultiLayerEvaluator
 
 __all__ = [
@@ -30,6 +35,7 @@ __all__ = [
     "ExtractedCoTVector",
     "LearnableCoTVector",
     "UACoTVector",
+    "MixtureUACoTVector",
     "MultiLayerUAVector",
     "MultiLayerEvaluator",
 ]
