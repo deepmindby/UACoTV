@@ -1,10 +1,11 @@
 """
 Main entry point for CoT Vectors.
 
-Supports four methods based on Variational CoT Vectors framework:
+Supports five methods based on Variational CoT Vectors framework:
 - Extracted: Statistical aggregation of activation differences
 - Learnable: Gradient optimization via teacher-student framework
 - UA: Uncertainty-Aware with Bayesian shrinkage
+- Optimization UA: Gradient-based implicit regularization (Algorithm 2)
 - Mixture UA: IGMM-based multimodal reasoning with per-cluster shrinkage
 
 RL-based methods have been removed in favor of analytical approaches.
@@ -20,6 +21,7 @@ from src.data_utils import load_dataset
 from src.methods.extracted import ExtractedCoTVector
 from src.methods.learnable import LearnableCoTVector
 from src.methods.ua_vector import UACoTVector
+from src.methods.optimization_ua import OptimizationUACoTVector
 from src.methods.mixture_ua import MixtureUACoTVector
 from src.methods.multi_layer_ua import MultiLayerUAVector, MultiLayerEvaluator
 from src.eval import run_baseline_evaluation, run_injection_evaluation
@@ -62,6 +64,13 @@ def main():
         print(f"  Min variance: {args.min_variance}")
         if args.multi_layer:
             print(f"  Multi-layer: {args.target_layers}")
+    
+    if args.method == "optimization_ua":
+        print("-" * 60)
+        print("Optimization-based UA Configuration:")
+        print(f"  Learning rate η: {args.learning_rate}")
+        print(f"  Optimization steps T: {args.num_epochs}")
+        print(f"  Min variance ε: {args.min_variance}")
     
     if args.method == "mixture_ua":
         print("-" * 60)
@@ -188,6 +197,19 @@ def main():
                 )
                 vector = method.extract(support_samples)
         
+        elif args.method == "optimization_ua":
+            print("Extracting Optimization-based UA CoT Vector...")
+            method = OptimizationUACoTVector(
+                model_wrapper=model_wrapper,
+                tokenizer=tokenizer,
+                layer_idx=args.layer_idx,
+                dataset_type=args.dataset,
+                learning_rate=args.learning_rate,
+                num_steps=args.num_epochs,  # Reuse num_epochs as optimization steps T
+                min_variance=args.min_variance,
+            )
+            vector = method.extract(support_samples)
+        
         elif args.method == "mixture_ua":
             print("Extracting Mixture UA CoT Vector (IGMM)...")
             method = MixtureUACoTVector(
@@ -220,8 +242,8 @@ def main():
                 "method": args.method,
             }
             
-            # Include additional statistics for UA method
-            if args.method == "ua" and hasattr(method, 'get_statistics'):
+            # Include additional statistics for UA methods
+            if args.method in ["ua", "optimization_ua"] and hasattr(method, 'get_statistics'):
                 save_data["statistics"] = method.get_statistics()
             
             # Include layer vectors for multi-layer
@@ -301,7 +323,7 @@ def main():
                 )
                 evaluator.clear_hooks()
             else:
-                # Single-layer evaluation (works for extracted, learnable, ua, mixture_ua)
+                # Single-layer evaluation (works for extracted, learnable, ua, optimization_ua, mixture_ua)
                 print(f"\n[2/2] With CoT Vector (layer {args.layer_idx})...")
                 injection_results = run_injection_evaluation(
                     model_wrapper=model_wrapper,

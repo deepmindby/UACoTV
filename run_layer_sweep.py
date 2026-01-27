@@ -3,7 +3,9 @@
 Layer sweep script for CoT Vectors.
 Evaluates injection at different layers to find optimal performance.
 
-Supports methods: extracted, learnable, ua (uncertainty-aware), mixture_ua (IGMM-based)
+Supports methods: extracted, learnable, ua (uncertainty-aware), 
+                  optimization_ua (gradient-based implicit regularization),
+                  mixture_ua (IGMM-based)
 RL-based methods have been removed.
 """
 
@@ -18,6 +20,7 @@ from src.data_utils import load_dataset
 from src.methods.extracted import ExtractedCoTVector
 from src.methods.learnable import LearnableCoTVector
 from src.methods.ua_vector import UACoTVector
+from src.methods.optimization_ua import OptimizationUACoTVector
 from src.methods.mixture_ua import MixtureUACoTVector
 from src.eval import run_baseline_evaluation, run_injection_evaluation
 from src.utils import set_seed
@@ -39,7 +42,7 @@ def main():
     
     # ==================== Method Selection ====================
     parser.add_argument("--method", type=str, default="extracted",
-                        choices=["extracted", "learnable", "ua", "mixture_ua"],
+                        choices=["extracted", "learnable", "ua", "optimization_ua", "mixture_ua"],
                         help="CoT Vector acquisition method")
     
     # ==================== Layer Selection ====================
@@ -107,6 +110,8 @@ def main():
               f"lr={args.learning_rate}, λ={args.lambda_val}, max_len={args.max_length}")
     if args.method == "ua":
         print(f"UA Config: τ²={args.tau_squared}, min_var={args.min_variance}")
+    if args.method == "optimization_ua":
+        print(f"Optimization UA Config: η={args.learning_rate}, T={args.num_epochs}, ε={args.min_variance}")
     if args.method == "mixture_ua":
         print(f"Mixture UA Config: τ²={args.tau_squared}, min_var={args.min_variance}, "
               f"components={args.num_mixture_components}, α={args.mixture_concentration}")
@@ -226,6 +231,18 @@ def main():
                     )
                     vector = method.extract(support_samples)
                     
+                elif args.method == "optimization_ua":
+                    method = OptimizationUACoTVector(
+                        model_wrapper=model_wrapper,
+                        tokenizer=tokenizer,
+                        layer_idx=layer_idx,
+                        dataset_type=args.dataset,
+                        learning_rate=args.learning_rate,
+                        num_steps=args.num_epochs,  # Reuse num_epochs as optimization steps T
+                        min_variance=args.min_variance,
+                    )
+                    vector = method.extract(support_samples)
+                    
                 elif args.method == "mixture_ua":
                     method = MixtureUACoTVector(
                         model_wrapper=model_wrapper,
@@ -279,8 +296,8 @@ def main():
             )
             save_data = {"vector": vector.cpu(), "layer": layer_idx, "method": args.method}
             
-            # Include UA statistics if available
-            if args.method == "ua" and method is not None and hasattr(method, 'get_statistics'):
+            # Include UA/Optimization UA statistics if available
+            if args.method in ["ua", "optimization_ua"] and method is not None and hasattr(method, 'get_statistics'):
                 save_data["statistics"] = method.get_statistics()
             
             # Include ALL cluster vectors for mixture_ua method
@@ -440,6 +457,12 @@ def main():
             f.write(f"\nUA Config:\n")
             f.write(f"  Tau squared: {args.tau_squared}\n")
             f.write(f"  Min variance: {args.min_variance}\n")
+        
+        if args.method == "optimization_ua":
+            f.write(f"\nOptimization UA Config:\n")
+            f.write(f"  Learning rate (η): {args.learning_rate}\n")
+            f.write(f"  Optimization steps (T): {args.num_epochs}\n")
+            f.write(f"  Min variance (ε): {args.min_variance}\n")
         
         if args.method == "mixture_ua":
             f.write(f"\nMixture UA Config:\n")

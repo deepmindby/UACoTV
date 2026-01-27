@@ -51,7 +51,7 @@ class MixtureUACoTVector(BaseCoTVectorMethod):
         min_variance: float = 1e-6,
         num_components: int = 10,
         concentration_prior: float = 1.0,
-        min_cluster_weight: float = 0.05,
+        min_cluster_weight: float = 0.0001,
     ):
         """
         Initialize Mixture UA CoT Vector extractor.
