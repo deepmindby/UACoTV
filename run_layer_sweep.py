@@ -59,9 +59,9 @@ def main():
                         help="Pre-computed baseline accuracy (use with --skip_baseline)")
     
     # ==================== Learnable Vector Config ====================
-    parser.add_argument("--lambda_val", type=float, default=0.5)
+    parser.add_argument("--lambda_val", type=float, default=1)
     parser.add_argument("--learning_rate", type=float, default=5e-3)
-    parser.add_argument("--num_epochs", type=int, default=5)
+    parser.add_argument("--num_epochs", type=int, default=10)
     parser.add_argument("--batch_size", type=int, default=2)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=4)
     parser.add_argument("--warmup_ratio", type=float, default=0.1)

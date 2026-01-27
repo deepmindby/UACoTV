@@ -144,7 +144,7 @@ class UACoTVector(BaseCoTVectorMethod):
         Implements the Variational CoT Vectors framework:
         1. Compute mean μ = (1/N) Σ v_i (same as Extracted method)
         2. Compute variance σ² = (1/N) Σ (v_i - μ)²
-        3. Apply Bayesian shrinkage: z = k ⊙ μ where k_d = σ²_d / (σ²_d + τ²)
+        3. Apply Bayesian shrinkage: z = k ⊙ μ where k_d = τ² / (σ²_d + τ²)
         
         Args:
             support_samples: List of training samples
@@ -184,8 +184,8 @@ class UACoTVector(BaseCoTVectorMethod):
         # Ensure minimum variance for numerical stability
         self.variance_vector = torch.clamp(self.variance_vector, min=self.min_variance)
         
-        # Step 3: Compute shrinkage coefficients k = σ² / (σ² + τ²)
-        self.shrinkage_coefficients = self.variance_vector / (self.variance_vector + self.tau_squared)
+        # Step 3: Compute shrinkage coefficients k = τ² / (σ² + τ²)
+        self.shrinkage_coefficients = self.tau_squared / (self.variance_vector + self.tau_squared)
         
         # Step 4: Apply Bayesian shrinkage: z = k ⊙ μ
         ua_vector = self.shrinkage_coefficients * self.mean_vector
