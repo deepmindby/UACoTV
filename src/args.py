@@ -165,7 +165,7 @@ def parse_args():
         "--learning_rate",
         type=float,
         default=5e-3,
-        help="Learning rate for vector optimization"
+        help="Learning rate for vector optimization (will be overridden by tiered LR strategy)"
     )
     parser.add_argument(
         "--batch_size",
@@ -176,8 +176,8 @@ def parse_args():
     parser.add_argument(
         "--gradient_accumulation_steps",
         type=int,
-        default=4,
-        help="Gradient accumulation steps"
+        default=2,
+        help="Gradient accumulation steps (paper default: 2)"
     )
     parser.add_argument(
         "--num_epochs",
@@ -188,8 +188,8 @@ def parse_args():
     parser.add_argument(
         "--warmup_ratio",
         type=float,
-        default=0.1,
-        help="Warmup ratio for LR scheduler"
+        default=0.5,
+        help="Warmup ratio for LR scheduler (paper default: 0.5 for MATH/LLaMA)"
     )
     parser.add_argument(
         "--weight_decay",

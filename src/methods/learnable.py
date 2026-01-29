@@ -142,6 +142,9 @@ class LearnableCoTVector(BaseCoTVectorMethod):
     Learnable CoT Vector optimized via teacher-student framework.
     
     Loss = L_align + λ * L_CE
+    
+    Where L_align is KL divergence between teacher and student hidden states
+    (as specified in the paper).
     """
     
     def __init__(
@@ -153,16 +156,15 @@ class LearnableCoTVector(BaseCoTVectorMethod):
         lambda_val: float = 0.5,
         learning_rate: float = 5e-3,
         weight_decay: float = 1e-3,
-        warmup_ratio: float = 0.1,
+        warmup_ratio: float = 0.5,
         num_epochs: int = 5,
-        batch_size: int = 2,  # Reduced default batch size
-        gradient_accumulation_steps: int = 4,  # Increased accumulation
-        max_length: int = 1024,  # Reduced max length
+        batch_size: int = 2,
+        gradient_accumulation_steps: int = 2,
+        max_length: int = 1024,
     ):
         super().__init__(model_wrapper, tokenizer, layer_idx, dataset_type)
         
         self.lambda_val = lambda_val
-        self.learning_rate = learning_rate
         self.weight_decay = weight_decay
         self.warmup_ratio = warmup_ratio
         self.num_epochs = num_epochs
@@ -170,20 +172,92 @@ class LearnableCoTVector(BaseCoTVectorMethod):
         self.gradient_accumulation_steps = gradient_accumulation_steps
         self.max_length = max_length
         
+        # Apply tiered learning rate strategy based on model type and layer index
+        # As specified in the paper:
+        # - Qwen: lr=5e-3 for first 4 layers (layer_idx < 4), lr=1e-4 for rest
+        # - LLaMA: lr=1e-4 for all layers
+        self.learning_rate = self._get_tiered_learning_rate(
+            model_wrapper.model_name, 
+            layer_idx, 
+            learning_rate
+        )
+        
         # Initialize learnable vector
         hidden_size = model_wrapper.hidden_size
         self.vector_param = nn.Parameter(torch.zeros(hidden_size))
         nn.init.normal_(self.vector_param, std=0.02)
+    
+    def _get_tiered_learning_rate(
+        self, 
+        model_name: str, 
+        layer_idx: int, 
+        default_lr: float
+    ) -> float:
+        """
+        Get tiered learning rate based on model type and layer index.
+        
+        According to the paper:
+        - For Qwen models: lr=5e-3 for first 4 layers (layer_idx < 4), 
+                          lr=1e-4 for layers >= 4
+        - For LLaMA models: lr=1e-4 for all layers
+        
+        Args:
+            model_name: Model type ('qwen' or 'llama')
+            layer_idx: Layer index for vector injection
+            default_lr: Default learning rate from arguments
+            
+        Returns:
+            Appropriate learning rate for the given configuration
+        """
+        if model_name.lower() == "qwen":
+            if layer_idx < 4:
+                lr = 5e-3
+            else:
+                lr = 1e-4
+            print(f"  Tiered LR (Qwen, layer {layer_idx}): {lr}")
+            return lr
+        elif model_name.lower() == "llama":
+            lr = 1e-4
+            print(f"  Tiered LR (LLaMA, layer {layer_idx}): {lr}")
+            return lr
+        else:
+            # For unknown models, use default learning rate
+            print(f"  Using default LR for unknown model '{model_name}': {default_lr}")
+            return default_lr
     
     def _compute_alignment_loss(
         self,
         teacher_hidden: torch.Tensor,
         student_hidden: torch.Tensor,
     ) -> torch.Tensor:
-        """Compute MSE alignment loss (more memory efficient than KL)."""
-        # Simple MSE loss for alignment
-        loss = F.mse_loss(student_hidden, teacher_hidden.detach())
-        return loss
+        """
+        Compute KL divergence alignment loss between teacher and student hidden states.
+        
+        As specified in the paper: "Representation alignment loss (L_Align) is the 
+        mean KL loss between hidden states".
+        
+        Args:
+            teacher_hidden: Teacher hidden states [batch, hidden_dim]
+            student_hidden: Student hidden states [batch, hidden_dim]
+            
+        Returns:
+            Mean KL divergence loss
+        """
+        # Apply softmax to teacher (target distribution) and log_softmax to student (input)
+        # KL(P || Q) = sum(P * log(P/Q)) = sum(P * (log P - log Q))
+        # F.kl_div expects log(Q) as input and P as target
+        teacher_probs = F.softmax(teacher_hidden.detach(), dim=-1)
+        student_log_probs = F.log_softmax(student_hidden, dim=-1)
+        
+        # Compute KL divergence: F.kl_div(input=log Q, target=P, reduction='batchmean')
+        # Using 'batchmean' to get mean over batch dimension as specified in paper
+        kl_loss = F.kl_div(
+            student_log_probs, 
+            teacher_probs, 
+            reduction='batchmean'
+        )
+        
+        return kl_loss
     
     def _compute_ce_loss(
         self,
@@ -217,9 +291,10 @@ class LearnableCoTVector(BaseCoTVectorMethod):
         """Train the learnable CoT vector."""
         print(f"Training learnable vector at layer {self.layer_idx}...")
         print(f"  Samples: {len(support_samples)}, Epochs: {self.num_epochs}")
-        print(f"  LR: {self.learning_rate}, λ: {self.lambda_val}")
+        print(f"  LR: {self.learning_rate} (tiered by model/layer), λ: {self.lambda_val}")
         print(f"  Batch size: {self.batch_size}, Grad accum: {self.gradient_accumulation_steps}")
         print(f"  Max length: {self.max_length}")
+        print(f"  Warmup ratio: {self.warmup_ratio}")
         
         # Create dataset and dataloader
         dataset = CoTDataset(
@@ -242,7 +317,7 @@ class LearnableCoTVector(BaseCoTVectorMethod):
         target_device = next(target_layer.parameters()).device
         self.vector_param.data = self.vector_param.data.to(target_device)
         
-        # Setup optimizer
+        # Setup optimizer with tiered learning rate
         optimizer = torch.optim.AdamW(
             [self.vector_param],
             lr=self.learning_rate,
@@ -369,7 +444,7 @@ class LearnableCoTVector(BaseCoTVectorMethod):
                     teacher_hidden_filtered = teacher_hidden[:len(student_hidden)]
                     
                     # ========== Compute losses ==========
-                    # Alignment loss
+                    # Alignment loss using KL divergence (as specified in paper)
                     align_loss = self._compute_alignment_loss(teacher_hidden_filtered, student_hidden)
                     
                     # CE loss
@@ -436,7 +511,7 @@ class LearnableCoTVector(BaseCoTVectorMethod):
             avg_align = epoch_align / max(num_batches, 1)
             avg_ce = epoch_ce / max(num_batches, 1)
             
-            print(f"  Epoch {epoch+1}: loss={avg_loss:.4f}, align={avg_align:.4f}, ce={avg_ce:.4f}")
+            print(f"  Epoch {epoch+1}: loss={avg_loss:.4f}, align(KL)={avg_align:.4f}, ce={avg_ce:.4f}")
             
             if wandb_run:
                 wandb_run.log({
