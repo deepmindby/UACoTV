@@ -63,13 +63,21 @@ def main():
                         help="Pre-computed baseline accuracy (use with --skip_baseline)")
     
     # ==================== Learnable Vector Config ====================
-    parser.add_argument("--lambda_val", type=float, default=0.5)
-    parser.add_argument("--learning_rate", type=float, default=5e-3)
-    parser.add_argument("--num_epochs", type=int, default=5)
-    parser.add_argument("--batch_size", type=int, default=2)
-    parser.add_argument("--gradient_accumulation_steps", type=int, default=4)
-    parser.add_argument("--warmup_ratio", type=float, default=0.1)
-    parser.add_argument("--weight_decay", type=float, default=1e-3)
+    # Updated to match paper specifications
+    parser.add_argument("--lambda_val", type=float, default=0.5,
+                        help="Balance factor λ between alignment and CE loss")
+    parser.add_argument("--learning_rate", type=float, default=5e-3,
+                        help="Learning rate (will be overridden by tiered LR strategy for learnable method)")
+    parser.add_argument("--num_epochs", type=int, default=5,
+                        help="Number of training epochs")
+    parser.add_argument("--batch_size", type=int, default=2,
+                        help="Batch size for training")
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=2,
+                        help="Gradient accumulation steps (paper default: 2)")
+    parser.add_argument("--warmup_ratio", type=float, default=0.5,
+                        help="Warmup ratio for LR scheduler (paper default: 0.5)")
+    parser.add_argument("--weight_decay", type=float, default=1e-3,
+                        help="Weight decay for AdamW")
     parser.add_argument("--max_length", type=int, default=1024,
                         help="Max sequence length for learnable method")
     
@@ -107,7 +115,8 @@ def main():
     print(f"Skip baseline: {args.skip_baseline}")
     if args.method == "learnable":
         print(f"Learnable Config: epochs={args.num_epochs}, batch={args.batch_size}, "
-              f"lr={args.learning_rate}, λ={args.lambda_val}, max_len={args.max_length}")
+              f"grad_accum={args.gradient_accumulation_steps}, warmup={args.warmup_ratio}, "
+              f"lr={args.learning_rate} (tiered), λ={args.lambda_val}, max_len={args.max_length}")
     if args.method == "ua":
         print(f"UA Config: τ²={args.tau_squared}, min_var={args.min_variance}")
     if args.method == "optimization_ua":
@@ -204,13 +213,15 @@ def main():
                     vector = method.extract(support_samples)
                     
                 elif args.method == "learnable":
+                    # LearnableCoTVector now handles tiered LR internally
+                    # based on model_name and layer_idx
                     method = LearnableCoTVector(
                         model_wrapper=model_wrapper,
                         tokenizer=tokenizer,
                         layer_idx=layer_idx,
                         dataset_type=args.dataset,
                         lambda_val=args.lambda_val,
-                        learning_rate=args.learning_rate,
+                        learning_rate=args.learning_rate,  # Will be overridden by tiered strategy
                         weight_decay=args.weight_decay,
                         warmup_ratio=args.warmup_ratio,
                         num_epochs=args.num_epochs,
@@ -449,8 +460,9 @@ def main():
             f.write(f"  Epochs: {args.num_epochs}\n")
             f.write(f"  Batch size: {args.batch_size}\n")
             f.write(f"  Grad accum: {args.gradient_accumulation_steps}\n")
-            f.write(f"  Learning rate: {args.learning_rate}\n")
+            f.write(f"  Learning rate: {args.learning_rate} (tiered by model/layer)\n")
             f.write(f"  Lambda: {args.lambda_val}\n")
+            f.write(f"  Warmup ratio: {args.warmup_ratio}\n")
             f.write(f"  Max length: {args.max_length}\n")
         
         if args.method == "ua":
