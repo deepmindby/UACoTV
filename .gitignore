@@ -330,3 +330,4 @@ wandb/offline-run-20260128_131617-vl3lcwb3/logs/debug.log
 outputs/learnable_gsm8k_L2.pt
 outputs/learnable_math_easy_L2.pt
 outputs/learnable_gsm8k_L4.pt
+outputs/learnable_math_easy_L4.pt
