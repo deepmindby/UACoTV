@@ -46,6 +46,30 @@ from src.eval import run_injection_evaluation, run_baseline_evaluation
 from src.utils import set_seed
 
 
+def convert_to_serializable(obj):
+    """
+    递归转换对象中的 numpy/torch 类型为 Python 原生类型，以便 JSON 序列化。
+    """
+    if isinstance(obj, dict):
+        return {k: convert_to_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_to_serializable(item) for item in obj]
+    elif isinstance(obj, tuple):
+        return tuple(convert_to_serializable(item) for item in obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, (np.float32, np.float64, np.floating)):
+        return float(obj)
+    elif isinstance(obj, (np.int32, np.int64, np.integer)):
+        return int(obj)
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
+    elif isinstance(obj, torch.Tensor):
+        return obj.cpu().numpy().tolist()
+    else:
+        return obj
+
+
 class VectorExtractor:
     """Extract activation difference vectors from support samples."""
     
@@ -778,6 +802,9 @@ def main():
     # Save results
     print("\n[5/5] Saving results...")
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # 转换所有数据为可序列化格式
+    all_results = convert_to_serializable(all_results)
     
     # Save JSON
     json_path = os.path.join(args.output_dir, f"ua_noise_results_L{args.layer}_{args.dataset}_{timestamp}.json")
